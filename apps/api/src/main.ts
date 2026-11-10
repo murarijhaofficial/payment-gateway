@@ -2,6 +2,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import helmet from 'helmet';
 import 'reflect-metadata';
+import type { Request, Response, NextFunction, Application } from 'express';
 
 import { AppModule } from './app.module.js';
 
@@ -26,10 +27,18 @@ async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule, { bodyParser: true });
 
   app.use(helmet());
+  if (process.env['RENDER'] === 'true') {
+    (app.getHttpAdapter().getInstance() as Application).set('trust proxy', 1);
+  }
+  app.use((_req: Request, res: Response, next: NextFunction) => {
+    res.setHeader('Cache-Control', 'no-store');
+    next();
+  });
   app.enableCors({
     origin: getAllowedOrigins(),
     credentials: false,
-    methods: ['GET'],
+    methods: ['GET', 'POST', 'DELETE'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key'],
   });
   app.useGlobalPipes(
     new ValidationPipe({
@@ -40,7 +49,7 @@ async function bootstrap(): Promise<void> {
     }),
   );
 
-  // Payment and webhook routes are intentionally absent until M0 approval and a raw-body design exist.
+  // Only explicit sandbox simulation routes exist; no provider or real money processing.
   const port = process.env['PORT'] ? Number(process.env['PORT']) : 3001;
   const host =
     process.env['APP_ENV'] === 'production' || process.env['RENDER'] === 'true'

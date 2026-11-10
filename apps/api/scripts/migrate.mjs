@@ -12,22 +12,22 @@ const connectionString = validateSandboxTarget(
   process.env.MIGRATION_TARGET,
 );
 if (process.env.RENDER === 'true') throw new Error('Run sandbox migrations outside Render');
-const sql = await readFile(new URL('../migrations/001_identity.sql', import.meta.url), 'utf8');
 const client = new pg.Client({ connectionString });
 await client.connect();
 try {
   await client.query('BEGIN');
   await client.query("SELECT pg_advisory_xact_lock(hashtext('sandbox_identity_migrations'))");
   await client.query('CREATE TABLE IF NOT EXISTS sandbox_schema_migrations (id TEXT PRIMARY KEY)');
-  const applied = await client.query('SELECT id FROM sandbox_schema_migrations WHERE id = $1', [
-    '001_identity',
-  ]);
-  if (applied.rowCount === 0) {
-    await client.query(sql);
-    await client.query('INSERT INTO sandbox_schema_migrations (id) VALUES ($1)', ['001_identity']);
-    console.log('Applied 001_identity');
-  } else {
-    console.log('001_identity already applied');
+  for (const id of ['001_identity', '002_workspace']) {
+    const applied = await client.query('SELECT id FROM sandbox_schema_migrations WHERE id = $1', [
+      id,
+    ]);
+    if (applied.rowCount === 0) {
+      const sql = await readFile(new URL(`../migrations/${id}.sql`, import.meta.url), 'utf8');
+      await client.query(sql);
+      await client.query('INSERT INTO sandbox_schema_migrations (id) VALUES ($1)', [id]);
+      console.log(`Applied ${id}`);
+    } else console.log(`${id} already applied`);
   }
   await client.query('COMMIT');
 } catch (error) {
