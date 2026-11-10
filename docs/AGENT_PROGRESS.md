@@ -85,3 +85,27 @@ The prior planning entry is retained in [AGENT_PROGRESS.md](../AGENT_PROGRESS.md
 - Next step: Verify clean deployment build and implement database-backed sandbox identity and accounting after required access-policy decisions.
 - Operator approval required: No for this isolated sandbox slice; approval remains necessary for applicable access-policy changes and production deployment.
 
+### 2026-11-10 04:49 UTC — M1-DB-001: Local sandbox identity schema
+- Status: COMPLETE
+- Objective: Prepare a local PostgreSQL foundation for test users, merchants and memberships.
+- Files changed: apps/api/migrations/001_identity.sql, apps/api/scripts/migrate.mjs, apps/api/src/identity-store.ts, apps/api/src/identity-store.test.ts, apps/api/package.json, apps/api/tsconfig.build.json, apps/api/.env.example, package.json, package-lock.json, docs/SANDBOX_DATABASE.md, docs/AGENT_PROGRESS.md.
+- Implementation summary: Added a loopback-only development migration runner, schema and parameterized transactional identity storage primitive. It is not connected to the API and does not implement signup or login.
+- Security/privacy considerations: Test fixtures only; no live data, sessions, password handling, authorization or production database connection. Schema contains a hash field but the caller must supply a properly generated hash when authentication is eventually designed. No automatic migration at startup.
+- Tests executed (commands and results): `npm.cmd test` passed (12/12), including in-memory SQL and a mocked rollback check; `npm.cmd run typecheck`, `npm.cmd run lint`, `npm.cmd run build`, and changed-file Prettier checks passed; `npm.cmd run audit` found 0 production vulnerabilities. Full `npm.cmd run format` failed on pre-existing README.md formatting. SQL emulator initially lacked trim and length functions; registered test implementations and reran successfully.
+- Evidence (commit, PR, test artifact, screenshot, or logs): Local terminal output. No real PostgreSQL executable or Docker was available; migration execution against PostgreSQL is unverified.
+- Open issues / risks: No real PostgreSQL integration test, password hashing, login, signup, MFA, sessions, access enforcement, transaction/wallet tables or real-data capability. Migration is restricted to disposable loopback development databases.
+- Next step: Run migration and integration tests on disposable PostgreSQL, then implement approved authentication and authorization controls before accepting account data.
+- Operator approval required: No for local test schema; access-policy activation and production deployment remain subject to project approval requirements.
+
+### 2026-11-10 05:12 UTC — API-RENDER-001: Fix Render port binding
+- Status: COMPLETE
+- Objective: Resolve Render's port scan timeout while retaining a loopback-only local development listener.
+- Files changed: apps/api/src/main.ts, docs/AGENT_PROGRESS.md.
+- Implementation summary: On Render or when APP_ENV is production, bind the configured PORT to 0.0.0.0 and deny unconfigured browser origins; otherwise retain the loopback development listener. Render sets RENDER=true automatically.
+- Security/privacy considerations: Render is public-facing; only the existing sandbox health route is enabled. CORS remains deny-by-default on Render. No payment, user, wallet or database routes were added.
+- Tests executed (commands and results): `npm.cmd run build --workspace=@platform/api`, `npm.cmd test` (12/12), `npm.cmd run lint`, and `npm.cmd run typecheck` passed. A local Render-like process returned HTTP 200 for /health, accepted a non-loopback TCP connection, and denied an unconfigured CORS origin. Socket inspection commands did not show the listener in this environment. `npm.cmd run format` failed on the existing README.md formatting. `npm.cmd audit --omit=dev` found 0 vulnerabilities; full `npm.cmd audit` reported 10 moderate issues in development lint dependencies.
+- Evidence (commit, PR, test artifact, screenshot, or logs): Local command and HTTP output; Render deployment was not performed.
+- Open issues / risks: Deployment and actual Render health remain unverified. Development dependency audit issues and existing formatting failure remain; app remains sandbox-only.
+- Next step: After the required deployment approval, push changes and verify Render's /health endpoint, then review development dependency updates.
+- Operator approval required: Yes for deployment, per AGENTS.md; no for the code change.
+

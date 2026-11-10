@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "tsc --project tsconfig.build.json",
-    "dev": "tsx watch src/main.ts"
+    "dev": "tsx watch src/main.ts",
+    "db:migrate": "node scripts/migrate.mjs"
   },
   "dependencies": {
     "@nestjs/common": "latest",
@@ -14,7 +15,12 @@
     "class-transformer": "latest",
     "class-validator": "latest",
     "helmet": "latest",
+    "pg": "^8.23.1",
     "reflect-metadata": "latest",
     "rxjs": "latest"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1",
+    "pg-mem": "^3.0.14"
   }
 }

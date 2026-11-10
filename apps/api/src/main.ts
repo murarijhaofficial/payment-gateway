@@ -15,7 +15,7 @@ function getAllowedOrigins(): readonly string[] {
     return configuredOrigins;
   }
 
-  if (process.env['APP_ENV'] === 'production') {
+  if (process.env['APP_ENV'] === 'production' || process.env['RENDER'] === 'true') {
     return [];
   }
 
@@ -42,7 +42,11 @@ async function bootstrap(): Promise<void> {
 
   // Payment and webhook routes are intentionally absent until M0 approval and a raw-body design exist.
   const port = process.env['PORT'] ? Number(process.env['PORT']) : 3001;
-  await app.listen(port, '127.0.0.1');
+  const host =
+    process.env['APP_ENV'] === 'production' || process.env['RENDER'] === 'true'
+      ? '0.0.0.0'
+      : '127.0.0.1';
+  await app.listen(port, host);
 }
 
 void bootstrap();
