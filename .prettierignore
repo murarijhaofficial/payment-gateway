@@ -1,0 +1,10 @@
+node_modules/
+.next/
+dist/
+coverage/
+# Planning documents predate the formatter baseline; format only new work until a dedicated docs pass.
+AGENTS.md
+PROJECT_PLAN.md
+AGENT_PROGRESS.md
+# Framework-managed file; Next.js regenerates it with its own formatting.
+apps/merchant-web/next-env.d.ts

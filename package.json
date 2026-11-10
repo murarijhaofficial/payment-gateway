@@ -1,0 +1,31 @@
+{
+  "name": "payment-gateway-platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Sandbox-only foundation for a multi-tenant payment orchestration platform.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run typecheck && npm run build --workspace=@platform/api && npm run build --workspace=@platform/merchant-web",
+    "dev:api": "npm run dev --workspace=@platform/api",
+    "dev:web": "npm run dev --workspace=@platform/merchant-web",
+    "format": "prettier --check .",
+    "format:write": "prettier --write .",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test packages/core/src/*.test.ts apps/merchant-web/lib/*.test.ts",
+    "audit": "npm audit --omit=dev"
+  },
+  "devDependencies": {
+    "@eslint/js": "latest",
+    "@types/node": "latest",
+    "eslint": "latest",
+    "globals": "latest",
+    "prettier": "latest",
+    "tsx": "latest",
+    "typescript": "latest",
+    "typescript-eslint": "latest"
+  }
+}
