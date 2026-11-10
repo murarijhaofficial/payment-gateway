@@ -2,20 +2,31 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
-import { getPlatformStatus, type PlatformStatus } from '../lib/platform-status';
+import {
+  getPlatformStatus,
+  resolveSandboxApiUrl,
+  type PlatformStatus,
+} from '../lib/platform-status';
 
 type StatusState =
   | { readonly kind: 'loading' }
   | { readonly kind: 'ready'; readonly value: PlatformStatus }
   | { readonly kind: 'error' };
 
-const apiBaseUrl = process.env['NEXT_PUBLIC_SANDBOX_API_URL'] ?? 'http://127.0.0.1:3001';
+const apiBaseUrl = resolveSandboxApiUrl(
+  process.env['NEXT_PUBLIC_SANDBOX_API_URL'],
+  process.env['NODE_ENV'] === 'development',
+);
 
 export function SandboxStatusCard() {
   const [status, setStatus] = useState<StatusState>({ kind: 'loading' });
 
   const refreshStatus = useCallback(async () => {
     setStatus({ kind: 'loading' });
+    if (!apiBaseUrl) {
+      setStatus({ kind: 'error' });
+      return;
+    }
     try {
       const value = await getPlatformStatus(fetch, apiBaseUrl);
       setStatus({ kind: 'ready', value });
@@ -51,8 +62,10 @@ export function SandboxStatusCard() {
         {status.kind === 'ready'
           ? `The API reports ${status.value.mode}; payment creation remains ${status.value.payments.replace('-', ' ')}.`
           : status.kind === 'error'
-            ? 'Start the local sandbox API, then try again. No data has been sent.'
-            : 'Connecting to the local sandbox API.'}
+            ? apiBaseUrl
+              ? 'Could not connect. Check that the API is running and allows this site’s origin.'
+              : 'The sandbox API URL is missing or invalid. Configure it in the deployment settings and redeploy.'
+            : 'Connecting to the sandbox API.'}
       </p>
       <button
         className="secondary-button"

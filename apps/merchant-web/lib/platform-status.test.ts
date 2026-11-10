@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { getPlatformStatus } from './platform-status.js';
+import { getPlatformStatus, resolveSandboxApiUrl } from './platform-status.js';
+
+test('validates deployment API URLs and supports local development', () => {
+  assert.equal(resolveSandboxApiUrl(undefined, false), null);
+  assert.equal(resolveSandboxApiUrl('http://localhost:3001', false), null);
+  assert.equal(resolveSandboxApiUrl('https://example.com/health', false), null);
+  assert.equal(resolveSandboxApiUrl('https://user:password@example.com', false), null);
+  assert.equal(resolveSandboxApiUrl('https://example.com/', false), 'https://example.com');
+  assert.equal(resolveSandboxApiUrl(undefined, true), 'http://127.0.0.1:3001');
+});
 
 test('returns a verified sandbox-only health payload', async () => {
   const fetcher: typeof fetch = async () =>

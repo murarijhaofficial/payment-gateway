@@ -133,3 +133,15 @@ The prior planning entry is retained in [AGENT_PROGRESS.md](../AGENT_PROGRESS.md
 - Next step: Implement approved authentication and role enforcement, then add test transaction records when a suitable sandbox schema is available.
 - Operator approval required: No for requested sandbox fixture inserts; access-policy activation and production deployment remain subject to project approvals.
 
+### 2026-11-10 05:46 UTC — WEB-CONFIG-001: Clarify sandbox connection configuration
+- Status: COMPLETE
+- Objective: Improve the dashboard's API connection diagnostics and document Render and Vercel environment settings.
+- Files changed: apps/merchant-web/lib/platform-status.ts, apps/merchant-web/lib/platform-status.test.ts, apps/merchant-web/components/sandbox-status-card.tsx, apps/api/.env.example, docs/DEPLOYMENT_ENVIRONMENT.md, docs/AGENT_PROGRESS.md.
+- Implementation summary: Validate the public API origin, avoid a localhost fallback in deployed builds, show actionable configuration versus connection errors, and replace the database credential found in the tracked example file with a placeholder.
+- Security/privacy considerations: The exposed database credential must be rotated; removing it from the current example file does not remove it from Git history. URL validation rejects credentials and insecure deployment URLs. No auth, tenant, wallet or payment functionality was added.
+- Tests executed (commands and results): `npm.cmd test` passed (15/15); typecheck, lint, full build and changed-file formatting checks passed; production dependency audit reported 0 vulnerabilities. Full formatter check continues to fail on pre-existing README.md formatting. A test Next.js build confirmed the configured public URL was embedded in the client bundle.
+- Evidence (commit, PR, test artifact, screenshot, or logs): Local test and build output. Actual Render and Vercel URLs were not provided and deployed connectivity has not been verified.
+- Open issues / risks: Database credential rotation is needed. Login, transactions, payments, wallets, and settlement workflows remain unimplemented; no cloud configuration was changed.
+- Next step: Rotate the exposed database role password, replace it in the local secret store, configure Render/Vercel origins, redeploy when authorized and verify /health.
+- Operator approval required: No for local changes; deployment remains subject to project approval requirements.
+
