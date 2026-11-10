@@ -73,3 +73,15 @@ The prior planning entry is retained in [AGENT_PROGRESS.md](../AGENT_PROGRESS.md
 - Next step: Define and obtain approval for the concrete role/access policy and rollback, then implement trusted identity and persistent tenant membership with route and database enforcement.
 - Operator approval required: Yes, before activating an access policy as required by AGENTS.md.
 
+### 2026-11-10 04:44 UTC — SANDBOX-LEDGER-001: Sandbox accounting projection and web build dependencies
+- Status: COMPLETE
+- Objective: Address the reported missing Vercel TypeScript dependencies and introduce a testable sandbox accounting projection.
+- Files changed: apps/merchant-web/package.json, package-lock.json, packages/core/src/sandbox-ledger.ts, packages/core/src/sandbox-ledger.test.ts, docs/AGENT_PROGRESS.md.
+- Implementation summary: Added TypeScript and required type packages as merchant web dependencies; added a pure balanced-journal projection with merchant scoping, duplicate rejection and integer arithmetic. No route, persistence or funds movement was added.
+- Security/privacy considerations: The accounting projection is illustrative only and is not a bank balance. It does not provide authentication, authorization, persistence, idempotent posting, reconciliation, settlement or withdrawals; test fixtures only.
+- Tests executed (commands and results): `npm.cmd test` passed (10/10); `npm.cmd run typecheck`, `npm.cmd run lint`, `npm.cmd run build` passed; `npm.cmd run audit` found 0 production vulnerabilities. `npm.cmd run format` failed on the existing README.md formatting. An isolated `npm ci --omit=dev --offline` followed by `npm.cmd run build --workspace=@platform/merchant-web` passed.
+- Evidence (commit, PR, test artifact, screenshot, or logs): Local terminal results; deployment on Vercel has not been verified.
+- Open issues / risks: Existing README formatting failure; cloud deploy not tested; database, authentication, ledger persistence, wallet, transactions and payment provider remain unimplemented. User must push source changes for Vercel to build them.
+- Next step: Verify clean deployment build and implement database-backed sandbox identity and accounting after required access-policy decisions.
+- Operator approval required: No for this isolated sandbox slice; approval remains necessary for applicable access-policy changes and production deployment.
+
