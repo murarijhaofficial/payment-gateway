@@ -109,3 +109,27 @@ The prior planning entry is retained in [AGENT_PROGRESS.md](../AGENT_PROGRESS.md
 - Next step: After the required deployment approval, push changes and verify Render's /health endpoint, then review development dependency updates.
 - Operator approval required: Yes for deployment, per AGENTS.md; no for the code change.
 
+### 2026-11-10 05:31 UTC — M1-DB-002: Apply identity schema to Neon sandbox
+- Status: COMPLETE
+- Objective: Apply and verify the initial identity schema in the empty Neon database selected by the operator.
+- Files changed: apps/api/scripts/migrate.mjs, apps/api/scripts/sandbox-target.mjs, apps/api/scripts/sandbox-target.test.mjs, apps/api/scripts/verify-sandbox.mjs, docs/SANDBOX_DATABASE.md, package.json, docs/AGENT_PROGRESS.md.
+- Implementation summary: Added explicit Neon sandbox selection and verified TLS, then applied 001_identity transactionally. A repeat run skipped the applied version; a separate read-only check confirmed the three identity tables and migration record.
+- Security/privacy considerations: Connection string remained in untracked local environment configuration and was not printed. No real user data, credentials, application login, or payment capabilities were added. The runner cannot establish whether a selected Neon branch is production; the operator must use a disposable sandbox.
+- Tests executed (commands and results): Neon migration reported `Applied 001_identity`; repeat reported `001_identity already applied`; verify script confirmed expected tables and record. `npm.cmd test` passed (14/14); lint, typecheck and API build passed; `npm.cmd audit --omit=dev` reported 0 vulnerabilities. Full formatter check failed on pre-existing README.md formatting. The initial read-only verification command failed due to shell quoting; corrected script passed.
+- Evidence (commit, PR, test artifact, screenshot, or logs): Local command output and direct Neon schema metadata verification; no customer data queried.
+- Open issues / risks: Login, sessions, roles, live app database connectivity, transaction and wallet persistence are not implemented. Migration guard relies on explicit operator sandbox selection.
+- Next step: Implement and test authentication and authorization before accepting user data; verify backup and recovery before any production use.
+- Operator approval required: No for the user-requested migration of the reported empty sandbox; production deployment and applicable access-policy changes require project approvals.
+
+### 2026-11-10 05:35 UTC — M1-FIXTURE-001: Seed synthetic sandbox identities
+- Status: COMPLETE
+- Objective: Create repeatable sample identity records in the user-selected Neon sandbox.
+- Files changed: apps/api/scripts/seed-sandbox.mjs, docs/SANDBOX_DATABASE.md, docs/AGENT_PROGRESS.md.
+- Implementation summary: Inserted two synthetic users, one example merchant and one membership in a transaction; repeats do not duplicate fixtures and conflicting identities cause rollback. The admin-labelled user has no role or elevated access.
+- Security/privacy considerations: Both password fields contain a non-authenticating marker. There is no login, active role policy, wallet or transaction table. The seed runs only in explicitly selected sandbox mode, uses TLS and refuses to run on Render. Never use fixture identities for real user data.
+- Tests executed (commands and results): Seed command ran twice successfully against Neon. `npm.cmd test` passed (14/14); lint, typecheck and API build passed; production dependency audit reported 0 vulnerabilities. Full format check failed on pre-existing README.md formatting.
+- Evidence (commit, PR, test artifact, screenshot, or logs): Seed output from the user-selected Neon sandbox and local verification command output.
+- Open issues / risks: Admin access, authentication, wallet/transaction fixtures, app integration and permission enforcement do not exist. The sandbox target setting alone cannot establish that a branch is non-production.
+- Next step: Implement approved authentication and role enforcement, then add test transaction records when a suitable sandbox schema is available.
+- Operator approval required: No for requested sandbox fixture inserts; access-policy activation and production deployment remain subject to project approvals.
+

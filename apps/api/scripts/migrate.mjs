@@ -3,19 +3,15 @@ import process from 'node:process';
 import console from 'node:console';
 import { URL } from 'node:url';
 import pg from 'pg';
+import { validateSandboxTarget } from './sandbox-target.mjs';
 
-// Prevent accidental application to a hosted database; this migration is test-only.
-const connectionString = process.env.DATABASE_URL;
-if (process.env.APP_ENV !== 'development' || !connectionString) {
-  throw new Error('Set APP_ENV=development and DATABASE_URL to a local test database');
-}
-const url = new URL(connectionString);
-if (
-  !['postgres:', 'postgresql:'].includes(url.protocol) ||
-  !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
-) {
-  throw new Error('Only a local PostgreSQL test database is allowed');
-}
+// The remote target must be a dedicated empty sandbox, not a production branch.
+const connectionString = validateSandboxTarget(
+  process.env.DATABASE_URL,
+  process.env.APP_ENV,
+  process.env.MIGRATION_TARGET,
+);
+if (process.env.RENDER === 'true') throw new Error('Run sandbox migrations outside Render');
 const sql = await readFile(new URL('../migrations/001_identity.sql', import.meta.url), 'utf8');
 const client = new pg.Client({ connectionString });
 await client.connect();
