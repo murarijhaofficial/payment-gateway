@@ -1,6 +1,7 @@
 'use client';
 import { useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { resolveSandboxApiUrl } from '../lib/platform-status';
+import QRCode from 'qrcode';
 
 type Row = Record<string, unknown>;
 interface Data {
@@ -124,6 +125,11 @@ export function Workspace() {
     [filter, setFilter] = useState('all'),
     [selected, setSelected] = useState<Row | null>(null),
     [secret, setSecret] = useState(''),
+    [checkoutShare, setCheckoutShare] = useState<{
+      url: string;
+      qr: string;
+      reference: string;
+    } | null>(null),
     [menu, setMenu] = useState(false);
   async function request(
     path: string,
@@ -233,6 +239,7 @@ export function Workspace() {
     setPage(next);
     setSelected(null);
     setSecret('');
+    setCheckoutShare(null);
     setSearch('');
     setFilter('all');
     setError('');
@@ -306,23 +313,19 @@ export function Workspace() {
     col('Status', 'status', status),
     col('Date', 'created_at', date),
   ];
-  const simulateLink = (r: Row) =>
+  const shareCheckout = (r: Row) =>
     void action(async () => {
-      await request(
-        '/payments',
-        'POST',
-        {
-          reference: r['reference'],
-          amountMinor: Number(r['amount_minor']),
-          method: 'upi',
-          outcome: 'captured',
-          linkId: r['id'],
-        },
-        token,
-        true,
-      );
-      await refresh();
-    }, 'Test checkout completed. No money moved.');
+      const result = (await request(`/links/${r['id']}/checkout`, 'POST', {}, token, true)) as {
+        checkoutToken: string;
+      };
+      const url = new URL('/pay', window.location.origin);
+      url.hash = new URLSearchParams({ token: result.checkoutToken }).toString();
+      setCheckoutShare({
+        url: url.toString(),
+        qr: await QRCode.toDataURL(url.toString(), { width: 240, margin: 4 }),
+        reference: String(r['reference']),
+      });
+    }, 'Test checkout ready to share. Anyone with the link can complete a simulated payment.');
 
   if (!data)
     return (
@@ -517,8 +520,8 @@ export function Workspace() {
             </div>
           </section>
           <div className="sandbox-strip">
-            All operations are simulated. No customer checkout, bank transfer or real funds movement
-            is connected.
+            Test mode: share checkout links and simulate payments. No bank transfer or real funds
+            movement is connected.
           </div>
           {error && (
             <div className="error-banner" role="alert">
@@ -685,10 +688,10 @@ export function Workspace() {
           {page === 'Payment links' && (
             <>
               <section className="workspace-card">
-                <h2>Create an owner-only test link</h2>
+                <h2>Create a payment link</h2>
                 <p className="small-copy">
-                  Simulate checkout from this signed-in workspace. Public customer checkout is not
-                  connected.
+                  Share a checkout page or QR code. Customers can complete a test payment without a
+                  merchant account.
                 </p>
                 <form
                   className="inline-form"
@@ -696,34 +699,104 @@ export function Workspace() {
                     submit(e, '/links', (f) => ({
                       reference: f.get('reference'),
                       amountMinor: minor(f.get('amount')),
+                      expiresInMinutes: Number(f.get('expiresInMinutes')),
                     }))
                   }
                 >
                   <Field label="Reference" name="reference" />
                   <Field label="Amount (INR)" name="amount" />
+                  <label className="form-field">
+                    <span>Expires after</span>
+                    <select name="expiresInMinutes" defaultValue="1440">
+                      <option value="60">1 hour</option>
+                      <option value="1440">24 hours</option>
+                      <option value="10080">7 days</option>
+                    </select>
+                  </label>
                   <button className="primary-button" disabled={busy}>
                     Create test link
                   </button>
                 </form>
               </section>
+              {checkoutShare && (
+                <section className="workspace-card checkout-share" aria-label="Share checkout">
+                  <div>
+                    <p className="eyebrow">Share test checkout</p>
+                    <h2>{checkoutShare.reference}</h2>
+                    <label className="form-field">
+                      <span>Checkout URL</span>
+                      <input
+                        value={checkoutShare.url}
+                        readOnly
+                        onFocus={(e) => e.currentTarget.select()}
+                      />
+                    </label>
+                    <div className="toolbar">
+                      <button
+                        className="secondary-button"
+                        onClick={() =>
+                          void action(
+                            () => navigator.clipboard.writeText(checkoutShare.url),
+                            'Checkout link copied.',
+                          )
+                        }
+                      >
+                        Copy link
+                      </button>
+                      <a
+                        className="primary-button"
+                        href={checkoutShare.url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Open checkout
+                      </a>
+                      <button className="text-button" onClick={() => setCheckoutShare(null)}>
+                        Close
+                      </button>
+                    </div>
+                    <p className="small-copy">
+                      This QR opens the test checkout page. It is not a UPI payment QR.
+                    </p>
+                  </div>
+                  <img
+                    src={checkoutShare.qr}
+                    width={240}
+                    height={240}
+                    alt="Scan to open this test checkout"
+                  />
+                </section>
+              )}
               <section className="workspace-card">
                 <Table
                   rows={data.links}
                   columns={[
                     col('Reference', 'reference'),
                     col('Amount', 'amount_minor', money),
-                    col('Status', 'status', status),
+                    col('Type', 'kind'),
+                    {
+                      label: 'Status',
+                      render: (r) =>
+                        status(
+                          r['status'] === 'active' &&
+                            new Date(String(r['expires_at'])).getTime() <= Date.now()
+                            ? 'expired'
+                            : r['status'],
+                        ),
+                    },
+                    col('Expires', 'expires_at', date),
                     {
                       label: 'Test checkout',
                       render: (r) =>
-                        r['status'] === 'active' ? (
+                        r['status'] === 'active' &&
+                        new Date(String(r['expires_at'])).getTime() > Date.now() ? (
                           <div className="toolbar">
                             <button
                               className="text-button"
                               disabled={busy}
-                              onClick={() => simulateLink(r)}
+                              onClick={() => shareCheckout(r)}
                             >
-                              Simulate payment
+                              Share checkout
                             </button>
                             <button
                               className="text-button danger"
@@ -845,7 +918,8 @@ export function Workspace() {
                 <h2>Scoped sandbox API keys</h2>
                 <p className="small-copy">
                   Keys can list and simulate your merchant’s payments. They cannot access admin,
-                  refunds, settlements or key management.
+                  refunds, settlements or key management. Enable collection access below to also
+                  create orders and publish checkout links.
                 </p>
                 <form
                   className="inline-form"
@@ -853,7 +927,10 @@ export function Workspace() {
                     e.preventDefault();
                     const f = new FormData(e.currentTarget);
                     void action(async () => {
-                      const r = (await request('/keys', 'POST', { label: f.get('label') })) as {
+                      const r = (await request('/keys', 'POST', {
+                        label: f.get('label'),
+                        collectionsEnabled: f.get('collectionsEnabled') === 'on',
+                      })) as {
                         secret: string;
                       };
                       setSecret(r.secret);
@@ -862,6 +939,10 @@ export function Workspace() {
                   }}
                 >
                   <Field label="Key label" name="label" />
+                  <label className="collection-scope">
+                    <input type="checkbox" name="collectionsEnabled" /> Allow order creation and
+                    checkout links
+                  </label>
                   <button className="primary-button" disabled={busy}>
                     Create test key
                   </button>
@@ -887,6 +968,11 @@ export function Workspace() {
                   columns={[
                     col('Label', 'label'),
                     col('Prefix', 'prefix'),
+                    {
+                      label: 'Scope',
+                      render: (r) =>
+                        r['collections_enabled'] ? 'Payments + collections' : 'Payments',
+                    },
                     { label: 'Status', render: (r) => (r['revoked_at'] ? 'Revoked' : 'Active') },
                     {
                       label: 'Action',
@@ -911,6 +997,9 @@ export function Workspace() {
               </section>
               <section className="workspace-card">
                 <h2>API quick start</h2>
+                <p>Create a key with collection access, then create an order on your server:</p>
+                <pre>{`POST ${api}/v1/sandbox/orders\nAuthorization: Bearer <server-side-test-key>\nIdempotency-Key: <unique-request-id>\nContent-Type: application/json\n\n{"amountMinor":100000,"reference":"ORDER-1001","expiresInMinutes":1440}\n\nPOST ${api}/v1/sandbox/orders/<order-id>/checkout\nAuthorization: Bearer <server-side-test-key>\nIdempotency-Key: <another-unique-request-id>\n\nResponse includes checkoutToken. Open /pay#token=<checkoutToken> on this dashboard's origin.\nGET ${api}/v1/sandbox/orders/<order-id> to verify the saved result on your server.`}</pre>
+                <h3>Direct payment simulation</h3>
                 <pre>{`POST ${api}/v1/sandbox/payments\nAuthorization: Bearer <server-side-test-key>\nIdempotency-Key: <unique-request-id>\nContent-Type: application/json\n\n{"amountMinor":100000,"reference":"ORDER-1001","method":"upi","outcome":"captured"}`}</pre>
                 <p className="small-copy">
                   Amounts are integer paise. Reuse the same idempotency key and payload when

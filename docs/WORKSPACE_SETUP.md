@@ -163,7 +163,8 @@ a branch backup before destructive cleanup. Removing tables is not an automatic
 rollback. Commission changes require a distinct administrator to approve; existing
 payments are not repriced.
 
-No live UPI/card processing, bank withdrawals, public hosted checkout, outgoing
+Public test checkout and shareable collection links are described in
+[payment collection](PAYMENT_COLLECTION.md). No live UPI/card processing, bank withdrawals, outgoing
 webhook delivery, email verification or password recovery is connected. Use only
 synthetic `.test` account data. Rotate any previously exposed database password
 and update the private connection string before making this sandbox publicly

@@ -90,6 +90,36 @@ export class SandboxController {
   ) {
     return this.service.createKey(await this.service.authenticate(token), body);
   }
+  @Post('orders') async createOrder(
+    @Headers('authorization') token: string | undefined,
+    @Headers('idempotency-key') key: string | undefined,
+    @Body() body: unknown,
+  ) {
+    return this.service.createOrder(await this.service.authenticate(token), key, body);
+  }
+  @Get('orders/:id') async order(
+    @Headers('authorization') token: string | undefined,
+    @Param('id') id: string,
+  ) {
+    return this.service.order(await this.service.authenticate(token), id);
+  }
+  @Post(['links/:id/checkout', 'orders/:id/checkout']) async publishCheckout(
+    @Headers('authorization') token: string | undefined,
+    @Headers('idempotency-key') key: string | undefined,
+    @Param('id') id: string,
+  ) {
+    return this.service.publishCheckout(await this.service.authenticate(token), key, id);
+  }
+  @Post('checkout/details') async checkoutDetails(@Body() body: unknown, @Req() req: Request) {
+    return this.service.checkoutDetails(body, req.ip ?? 'unknown');
+  }
+  @Post('checkout/pay') async payCheckout(
+    @Headers('idempotency-key') key: string | undefined,
+    @Body() body: unknown,
+    @Req() req: Request,
+  ) {
+    return this.service.payCheckout(key, body, req.ip ?? 'unknown');
+  }
   @Delete('keys/:id') async revokeKey(
     @Headers('authorization') token: string | undefined,
     @Param('id') id: string,

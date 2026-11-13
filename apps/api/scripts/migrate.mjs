@@ -18,7 +18,7 @@ try {
   await client.query('BEGIN');
   await client.query("SELECT pg_advisory_xact_lock(hashtext('sandbox_identity_migrations'))");
   await client.query('CREATE TABLE IF NOT EXISTS sandbox_schema_migrations (id TEXT PRIMARY KEY)');
-  for (const id of ['001_identity', '002_workspace']) {
+  for (const id of ['001_identity', '002_workspace', '003_collections']) {
     const applied = await client.query('SELECT id FROM sandbox_schema_migrations WHERE id = $1', [
       id,
     ]);

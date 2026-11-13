@@ -35,6 +35,9 @@ test('PostgreSQL sandbox: authentication, tenant isolation, money, refunds, keys
   await db.exec(
     await readFile(new URL('../migrations/002_workspace.sql', import.meta.url), 'utf8'),
   );
+  await db.exec(
+    await readFile(new URL('../migrations/003_collections.sql', import.meta.url), 'utf8'),
+  );
   let tail = Promise.resolve();
   async function connect() {
     const previous = tail;
@@ -177,6 +180,149 @@ test('PostgreSQL sandbox: authentication, tenant isolation, money, refunds, keys
     await db.exec(
       'DROP TRIGGER test_reject_event ON sb_webhook_events; DROP FUNCTION sb_test_reject_event();',
     );
+    // Public collection capabilities never grant merchant or administrator access.
+    const limitedKey = await service.createKey(one, { label: 'No collection scope' });
+    const limited = await service.authenticate(`Bearer ${limitedKey.secret}`);
+    await assert.rejects(() =>
+      service.createOrder(limited, randomUUID(), { amountMinor: 99900, reference: 'ORDER' }),
+    );
+    const collectionKey = await service.createKey(one, {
+      label: 'Collection server',
+      collectionsEnabled: true,
+    });
+    const collectionMachine = await service.authenticate(`Bearer ${collectionKey.secret}`);
+    const orderKey = randomUUID();
+    const orderInput = { amountMinor: 99900, reference: 'ORDER', expiresInMinutes: 60 };
+    const order = (await service.createOrder(collectionMachine, orderKey, orderInput)) as {
+      id: string;
+    };
+    assert.equal(
+      ((await service.createOrder(collectionMachine, orderKey, orderInput)) as { id: string }).id,
+      order.id,
+    );
+    await assert.rejects(() =>
+      service.createOrder(collectionMachine, orderKey, { ...orderInput, amountMinor: 1 }),
+    );
+    await assert.rejects(() => service.publishCheckout(two, randomUUID(), order.id));
+    await assert.rejects(() => service.publishCheckout(limited, randomUUID(), order.id));
+    await assert.rejects(() => service.order(two, order.id));
+    await assert.rejects(() => service.order(limited, order.id));
+    const checkout = await service.publishCheckout(collectionMachine, randomUUID(), order.id);
+    const publishedAgain = await service.publishCheckout(collectionMachine, randomUUID(), order.id);
+    assert.equal(
+      checkout.checkoutToken,
+      publishedAgain.checkoutToken,
+      'publishing keeps the same active capability',
+    );
+    const details = await service.checkoutDetails({ token: checkout.checkoutToken }, 'public-test');
+    assert.equal(details.amountMinor, 99900);
+    assert.equal(details.merchantName, 'Demo One');
+    assert.equal(details.status, 'active');
+    await assert.rejects(() => service.authenticate(`Bearer ${checkout.checkoutToken}`));
+    await assert.rejects(() => service.checkoutDetails({ token: 'x'.repeat(43) }, 'public-test'));
+    const beforeCheckout = Number((await service.workspace(one)).totals?.['merchant_balance']);
+    const payInput = { token: checkout.checkoutToken, method: 'upi', outcome: 'captured' };
+    await assert.rejects(() =>
+      service.payCheckout(randomUUID(), { ...payInput, amountMinor: 1 }, 'public-test'),
+    );
+    await assert.rejects(() =>
+      service.payCheckout(randomUUID(), { ...payInput, merchantId: two.merchantId }, 'public-test'),
+    );
+    const failed = (await service.payCheckout(
+      randomUUID(),
+      { ...payInput, outcome: 'failed' },
+      'public-test',
+    )) as { status: string };
+    assert.equal(failed.status, 'failed');
+    assert.equal(
+      Number((await service.workspace(one)).totals?.['merchant_balance']),
+      beforeCheckout,
+    );
+    assert.equal(
+      (await service.checkoutDetails({ token: checkout.checkoutToken }, 'public-test')).status,
+      'active',
+    );
+    const payKey = randomUUID();
+    const [collected, collectedReplay] = await Promise.all([
+      service.payCheckout(payKey, payInput, 'public-test'),
+      service.payCheckout(payKey, payInput, 'public-test'),
+    ]);
+    assert.deepEqual(collected, collectedReplay);
+    const collectedId = (collected as { id: string }).id;
+    assert.equal(
+      Number((await service.workspace(one)).totals?.['merchant_balance']),
+      beforeCheckout + 96403,
+    );
+    const collectionRows = await adapter.query('SELECT * FROM sb_journals WHERE source_id=$1', [
+      collectedId,
+    ]);
+    assert.equal(collectionRows.rows.length, 1);
+    assert.equal(Number((collectionRows.rows[0] as Record<string, unknown>)['income_delta']), 3497);
+    assert.equal((await service.order(collectionMachine, order.id)).status, 'paid');
+    assert.equal(
+      (await service.checkoutDetails({ token: checkout.checkoutToken }, 'public-test')).status,
+      'paid',
+    );
+    await assert.rejects(() => service.payCheckout(randomUUID(), payInput, 'public-test'));
+    await assert.rejects(() =>
+      service.payCheckout(payKey, { ...payInput, method: 'card' }, 'public-test'),
+    );
+    const publicAudit = await adapter.query(
+      "SELECT actor FROM sb_audit WHERE resource_id=$1 AND action='sandbox.checkout.captured'",
+      [collectedId],
+    );
+    assert.equal((publicAudit.rows[0] as Record<string, unknown>)['actor'], null);
+    const privateLinks = (await service.workspace(one)).links;
+    assert.ok(
+      privateLinks.every(
+        (row) => !('checkout_token_ciphertext' in row) && !('checkout_token_hash' in row),
+      ),
+    );
+    const expiredOrder = (await service.createOrder(one, randomUUID(), orderInput)) as {
+      id: string;
+    };
+    const expiredCheckout = await service.publishCheckout(one, randomUUID(), expiredOrder.id);
+    await adapter.query(
+      "UPDATE sb_payment_links SET expires_at=now()-interval '1 minute' WHERE id=$1",
+      [expiredOrder.id],
+    );
+    assert.equal(
+      (await service.checkoutDetails({ token: expiredCheckout.checkoutToken }, 'public-test'))
+        .status,
+      'expired',
+    );
+    await assert.rejects(() =>
+      service.payCheckout(
+        randomUUID(),
+        { ...payInput, token: expiredCheckout.checkoutToken },
+        'public-test',
+      ),
+    );
+    const cancelledOrder = (await service.createOrder(one, randomUUID(), orderInput)) as {
+      id: string;
+    };
+    const cancelledCheckout = await service.publishCheckout(one, randomUUID(), cancelledOrder.id);
+    await service.cancelLink(one, randomUUID(), cancelledOrder.id);
+    await assert.rejects(() =>
+      service.payCheckout(
+        randomUUID(),
+        { ...payInput, token: cancelledCheckout.checkoutToken },
+        'public-test',
+      ),
+    );
+    await service.refund(one, randomUUID(), collectedId, { reason: 'Public checkout test refund' });
+    assert.equal(
+      (await service.checkoutDetails({ token: checkout.checkoutToken }, 'public-test')).payment?.[
+        'status'
+      ],
+      'refunded',
+    );
+    assert.equal(
+      Number((await service.workspace(one)).totals?.['merchant_balance']),
+      beforeCheckout,
+    );
+    await service.revokeKey(one, collectionKey.id);
+    await assert.rejects(() => service.authenticate(`Bearer ${collectionKey.secret}`));
     await assert.rejects(() => adapter.query('UPDATE sb_journals SET income_delta=0'));
     await assert.rejects(() => adapter.query('DELETE FROM sb_audit'));
     await assert.rejects(() => adapter.query('UPDATE sb_fee_versions SET bps=0'));
@@ -192,6 +338,27 @@ test('PostgreSQL sandbox: authentication, tenant isolation, money, refunds, keys
     try {
       const base = await app.getUrl();
       assert.equal((await fetch(`${base}/v1/sandbox/workspace`)).status, 401);
+      const checkoutHttp = await fetch(`${base}/v1/sandbox/checkout/details`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: checkout.checkoutToken }),
+      });
+      assert.equal(
+        checkoutHttp.status,
+        201,
+        'public checkout details do not require a merchant login',
+      );
+      assert.equal(((await checkoutHttp.json()) as { status: string }).status, 'paid');
+      assert.equal(
+        (
+          await fetch(`${base}/v1/sandbox/orders`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(orderInput),
+          })
+        ).status,
+        401,
+      );
       const response = await fetch(`${base}/v1/sandbox/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

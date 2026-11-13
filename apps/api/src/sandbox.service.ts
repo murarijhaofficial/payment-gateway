@@ -13,6 +13,7 @@ import {
   checkPassword,
   decryptSecret,
   digest,
+  encryptSecret,
   hashPassword,
   newToken,
   verifyTotp,
@@ -27,6 +28,7 @@ export interface SandboxContext {
   role: 'merchant_owner' | 'platform_admin';
   keyId: string | null;
   tokenHash: string;
+  collectionsEnabled?: boolean;
 }
 export function sandboxPool(connectionString: string): Pool {
   const url = new URL(connectionString);
@@ -161,7 +163,7 @@ export class SandboxService {
       keyId: string | null = null;
     if (token.startsWith('sb_test_')) {
       const result = await this.db().query<Row>(
-        `SELECT u.*,k.id AS key_id FROM sb_api_keys k JOIN sb_users u ON u.id=k.created_by
+        `SELECT u.*,k.id AS key_id,k.collections_enabled FROM sb_api_keys k JOIN sb_users u ON u.id=k.created_by
         WHERE k.key_hash=$1 AND k.revoked_at IS NULL AND u.role='merchant_owner' AND u.merchant_id=k.merchant_id`,
         [tokenHash],
       );
@@ -183,6 +185,7 @@ export class SandboxService {
       role: user['role'] as SandboxContext['role'],
       keyId,
       tokenHash,
+      collectionsEnabled: user['collections_enabled'] === true,
     };
   }
   human(ctx: SandboxContext) {
@@ -205,7 +208,7 @@ export class SandboxService {
   }
   private async audit(
     client: PoolClient,
-    ctx: { userId: string; merchantId: string | null },
+    ctx: { userId: string | null; merchantId: string | null },
     action: string,
     resourceId: string,
   ) {
@@ -253,11 +256,21 @@ export class SandboxService {
     body: unknown,
     fn: (client: PoolClient) => Promise<unknown>,
   ) {
+    const principal = ctx.keyId ? `key:${ctx.keyId}` : `user:${ctx.userId}`;
+    return this.idempotent(principal, ctx.merchantId, key, operation, body, fn);
+  }
+  private async idempotent(
+    principal: string,
+    merchantId: string | null,
+    key: string | undefined,
+    operation: string,
+    body: unknown,
+    fn: (client: PoolClient) => Promise<unknown>,
+  ) {
     if (!key || !/^[a-zA-Z0-9_-]{16,100}$/.test(key))
       throw new BadRequestException(
         'Use a unique Idempotency-Key (16–100 letters, digits, underscores or hyphens)',
       );
-    const principal = ctx.keyId ? `key:${ctx.keyId}` : `user:${ctx.userId}`;
     const requestHash = digest(JSON.stringify([operation, body]));
     return this.transaction(async (client) => {
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`${principal}:${key}`]);
@@ -272,8 +285,8 @@ export class SandboxService {
           throw new ConflictException('Idempotency key was used for a different request');
         return previous['response'];
       }
-      if (ctx.merchantId)
-        await client.query('SELECT id FROM sb_merchants WHERE id=$1 FOR UPDATE', [ctx.merchantId]);
+      if (merchantId)
+        await client.query('SELECT id FROM sb_merchants WHERE id=$1 FOR UPDATE', [merchantId]);
       const response = await fn(client);
       await client.query(
         'INSERT INTO sb_idempotency (principal,key,request_hash,response) VALUES ($1,$2,$3,$4)',
@@ -308,7 +321,10 @@ export class SandboxService {
       keys,
     ] = await Promise.all([
       select('sb_payments'),
-      select('sb_payment_links'),
+      select(
+        'sb_payment_links',
+        'id,merchant_id,reference,amount_minor,status,created_at,expires_at,kind',
+      ),
       select('sb_refunds'),
       select('sb_settlements'),
       select('sb_journals'),
@@ -331,7 +347,7 @@ export class SandboxService {
         )
         .then((r) => r.rows),
       ctx.role === 'merchant_owner'
-        ? select('sb_api_keys', 'id,label,prefix,revoked_at,created_at')
+        ? select('sb_api_keys', 'id,label,prefix,revoked_at,created_at,collections_enabled')
         : [],
     ]);
     const totals = (
@@ -387,35 +403,73 @@ export class SandboxService {
         if (!link) throw new NotFoundException('Payment link not found');
         if (
           link['status'] !== 'active' ||
+          new Date(String(link['expires_at'])).getTime() <= Date.now() ||
           Number(link['amount_minor']) !== amount ||
           outcome !== 'captured'
         )
           throw new ConflictException('Link is not payable with these parameters');
       }
-      const fee = (
-        await client.query<Row>('SELECT id,bps FROM sb_fee_versions ORDER BY sequence DESC LIMIT 1')
-      ).rows[0];
-      if (!fee) throw new ServiceUnavailableException('Fee policy missing');
-      const feeMinor =
-        outcome === 'captured'
-          ? Number((BigInt(amount) * BigInt(Number(fee['bps'])) + 5000n) / 10000n)
-          : 0;
-      const id = randomUUID();
-      await client.query(
-        'INSERT INTO sb_payments (id,merchant_id,reference,method,amount_minor,fee_minor,fee_version_id,status,link_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
-        [id, merchantId, reference, method, amount, feeMinor, fee['id'], outcome, linkId],
+      return this.postPayment(
+        client,
+        merchantId,
+        ctx.userId,
+        amount,
+        reference,
+        method,
+        outcome,
+        linkId,
       );
-      if (outcome === 'captured')
-        await this.journal(client, merchantId, id, 'payment', amount, amount - feeMinor, feeMinor);
-      if (linkId)
-        await client.query(
-          "UPDATE sb_payment_links SET status='paid' WHERE id=$1 AND merchant_id=$2",
-          [linkId, merchantId],
-        );
-      await this.audit(client, ctx, `sandbox.payment.${outcome}`, id);
-      await this.event(client, merchantId, `payment.${outcome}`, id);
-      return { id, status: outcome, amountMinor: amount, feeMinor, mode: 'sandbox-only' };
     });
+  }
+  private async postPayment(
+    client: PoolClient,
+    merchantId: string,
+    actor: string | null,
+    amount: number,
+    reference: string,
+    method: string,
+    outcome: string,
+    linkId: string | null,
+  ) {
+    const fee = (
+      await client.query<Row>('SELECT id,bps FROM sb_fee_versions ORDER BY sequence DESC LIMIT 1')
+    ).rows[0];
+    if (!fee) throw new ServiceUnavailableException('Fee policy missing');
+    const feeMinor =
+      outcome === 'captured'
+        ? Number((BigInt(amount) * BigInt(Number(fee['bps'])) + 5000n) / 10000n)
+        : 0;
+    const id = randomUUID();
+    await client.query(
+      'INSERT INTO sb_payments (id,merchant_id,reference,method,amount_minor,fee_minor,fee_version_id,status,link_id,checkout_link_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+      [
+        id,
+        merchantId,
+        reference,
+        method,
+        amount,
+        feeMinor,
+        fee['id'],
+        outcome,
+        outcome === 'captured' ? linkId : null,
+        linkId,
+      ],
+    );
+    if (outcome === 'captured')
+      await this.journal(client, merchantId, id, 'payment', amount, amount - feeMinor, feeMinor);
+    if (linkId && outcome === 'captured')
+      await client.query(
+        "UPDATE sb_payment_links SET status='paid' WHERE id=$1 AND merchant_id=$2",
+        [linkId, merchantId],
+      );
+    await this.audit(
+      client,
+      { userId: actor, merchantId },
+      actor ? `sandbox.payment.${outcome}` : `sandbox.checkout.${outcome}`,
+      id,
+    );
+    await this.event(client, merchantId, `payment.${outcome}`, id);
+    return { id, status: outcome, amountMinor: amount, feeMinor, mode: 'sandbox-only' };
   }
   async refund(ctx: SandboxContext, key: string | undefined, id: string, raw: unknown) {
     this.human(ctx);
@@ -473,19 +527,220 @@ export class SandboxService {
   }
   async createLink(ctx: SandboxContext, key: string | undefined, raw: unknown) {
     this.human(ctx);
+    return this.createCollection(ctx, key, raw, 'payment_link');
+  }
+  private collectionOwner(ctx: SandboxContext) {
+    const merchantId = this.owner(ctx);
+    if (ctx.keyId && !ctx.collectionsEnabled)
+      throw new ForbiddenException('This API key does not have collection access');
+    return merchantId;
+  }
+  async createOrder(ctx: SandboxContext, key: string | undefined, raw: unknown) {
+    this.collectionOwner(ctx);
+    return this.createCollection(ctx, key, raw, 'order');
+  }
+  private async createCollection(
+    ctx: SandboxContext,
+    key: string | undefined,
+    raw: unknown,
+    kind: string,
+  ) {
     const merchantId = this.owner(ctx),
-      body = objectBody(raw, ['amountMinor', 'reference']);
+      body = objectBody(raw, ['amountMinor', 'reference', 'expiresInMinutes']);
     const amount = integerField(body, 'amountMinor'),
       reference = textField(body, 'reference', 1, 100);
-    return this.mutate(ctx, key, 'link', body, async (client) => {
-      const id = randomUUID();
-      await client.query(
-        'INSERT INTO sb_payment_links (id,merchant_id,amount_minor,reference) VALUES ($1,$2,$3,$4)',
-        [id, merchantId, amount, reference],
-      );
-      await this.audit(client, ctx, 'sandbox.link.create', id);
-      return { id, status: 'active' };
+    const duration =
+      body['expiresInMinutes'] === undefined
+        ? 1440
+        : integerField(body, 'expiresInMinutes', 1, 10080);
+    return this.mutate(
+      ctx,
+      key,
+      kind === 'payment_link' ? 'link' : 'order',
+      body,
+      async (client) => {
+        const id = randomUUID();
+        const result = await client.query<Row>(
+          "INSERT INTO sb_payment_links (id,merchant_id,amount_minor,reference,kind,expires_at) VALUES ($1,$2,$3,$4,$5,now()+$6*interval '1 minute') RETURNING expires_at",
+          [id, merchantId, amount, reference, kind, duration],
+        );
+        await this.audit(client, ctx, `sandbox.${kind}.create`, id);
+        return {
+          id,
+          status: 'active',
+          amountMinor: amount,
+          currency: 'INR',
+          expiresAt: result.rows[0]?.['expires_at'],
+          mode: 'sandbox-only',
+        };
+      },
+    );
+  }
+  async order(ctx: SandboxContext, id: string) {
+    const merchantId = this.collectionOwner(ctx);
+    uuid(id);
+    const result = await this.db().query<Row>(
+      "SELECT id,reference,amount_minor,status,expires_at,created_at FROM sb_payment_links WHERE id=$1 AND merchant_id=$2 AND kind='order'",
+      [id, merchantId],
+    );
+    const row = result.rows[0];
+    if (!row) throw new NotFoundException('Order not found');
+    const payment = await this.db().query<Row>(
+      'SELECT id,status,amount_minor,fee_minor,fee_version_id FROM sb_payments WHERE link_id=$1 AND merchant_id=$2',
+      [id, merchantId],
+    );
+    const captured = payment.rows[0];
+    return {
+      id: row['id'],
+      reference: row['reference'],
+      amountMinor: Number(row['amount_minor']),
+      status: this.collectionStatus(row),
+      currency: 'INR',
+      createdAt: row['created_at'],
+      expiresAt: row['expires_at'],
+      payment: captured
+        ? {
+            id: captured['id'],
+            status: captured['status'],
+            amountMinor: Number(captured['amount_minor']),
+            feeMinor: Number(captured['fee_minor']),
+            feeVersionId: captured['fee_version_id'],
+          }
+        : null,
+      mode: 'sandbox-only',
+    };
+  }
+  private collectionStatus(row: Row): string {
+    return row['status'] === 'active' && new Date(String(row['expires_at'])).getTime() <= Date.now()
+      ? 'expired'
+      : String(row['status']);
+  }
+  async publishCheckout(ctx: SandboxContext, key: string | undefined, id: string) {
+    const merchantId = this.collectionOwner(ctx);
+    uuid(id);
+    await this.mutate(ctx, key, `checkout.publish:${id}`, {}, async (client) => {
+      const row = (
+        await client.query<Row>(
+          'SELECT * FROM sb_payment_links WHERE id=$1 AND merchant_id=$2 FOR UPDATE',
+          [id, merchantId],
+        )
+      ).rows[0];
+      if (!row) throw new NotFoundException('Payment request not found');
+      if (this.collectionStatus(row) !== 'active')
+        throw new ConflictException('Payment request is no longer active');
+      if (!row['checkout_token_hash']) {
+        const token = newToken();
+        await client.query(
+          'UPDATE sb_payment_links SET checkout_token_hash=$3,checkout_token_ciphertext=$4 WHERE id=$1 AND merchant_id=$2',
+          [id, merchantId, digest(token), encryptSecret(token, this.encryptionKey)],
+        );
+        await this.audit(client, ctx, 'sandbox.checkout.publish', id);
+      }
+      return { id };
     });
+    const row = (
+      await this.db().query<Row>(
+        'SELECT checkout_token_ciphertext,expires_at FROM sb_payment_links WHERE id=$1 AND merchant_id=$2',
+        [id, merchantId],
+      )
+    ).rows[0];
+    if (!row?.['checkout_token_ciphertext']) throw new NotFoundException('Checkout not found');
+    return {
+      id,
+      checkoutToken: decryptSecret(String(row['checkout_token_ciphertext']), this.encryptionKey),
+      expiresAt: row['expires_at'],
+      mode: 'sandbox-only',
+    };
+  }
+  private checkoutToken(body: Row) {
+    const token = textField(body, 'token', 43, 43);
+    if (!/^[A-Za-z0-9_-]{43}$/.test(token)) throw new BadRequestException('Invalid checkout token');
+    return token;
+  }
+  private async publicLink(token: string, ip: string) {
+    await this.rate(`checkout-ip:${ip}`, 60, 60);
+    await this.rate(`checkout-token:${digest(token)}`, 30, 60);
+    const row = (
+      await this.db().query<Row>(
+        'SELECT l.id,l.merchant_id,l.reference,l.amount_minor,l.status,l.expires_at,m.name AS merchant_name FROM sb_payment_links l JOIN sb_merchants m ON m.id=l.merchant_id WHERE l.checkout_token_hash=$1',
+        [digest(token)],
+      )
+    ).rows[0];
+    if (!row) throw new NotFoundException('Checkout not found');
+    return row;
+  }
+  async checkoutDetails(raw: unknown, ip: string) {
+    const body = objectBody(raw, ['token']);
+    const row = await this.publicLink(this.checkoutToken(body), ip);
+    const payment = await this.db().query<Row>(
+      'SELECT id,status,amount_minor FROM sb_payments WHERE link_id=$1 AND merchant_id=$2',
+      [row['id'], row['merchant_id']],
+    );
+    const captured = payment.rows[0];
+    return {
+      id: row['id'],
+      merchantName: row['merchant_name'],
+      reference: row['reference'],
+      amountMinor: Number(row['amount_minor']),
+      currency: 'INR',
+      status: this.collectionStatus(row),
+      expiresAt: row['expires_at'],
+      payment: captured
+        ? {
+            id: captured['id'],
+            status: captured['status'],
+            amountMinor: Number(captured['amount_minor']),
+          }
+        : null,
+      mode: 'sandbox-only',
+    };
+  }
+  async payCheckout(key: string | undefined, raw: unknown, ip: string) {
+    const body = objectBody(raw, ['token', 'method', 'outcome']);
+    const token = this.checkoutToken(body),
+      method = textField(body, 'method'),
+      outcome = textField(body, 'outcome');
+    if (!['upi', 'card'].includes(method) || !['captured', 'failed'].includes(outcome))
+      throw new BadRequestException('Invalid test payment choice');
+    const link = await this.publicLink(token, ip);
+    const merchantId = String(link['merchant_id']);
+    return this.idempotent(
+      `checkout:${digest(token)}`,
+      merchantId,
+      key,
+      'checkout.pay',
+      { method, outcome },
+      async (client) => {
+        const row = (
+          await client.query<Row>(
+            'SELECT * FROM sb_payment_links WHERE id=$1 AND merchant_id=$2 AND checkout_token_hash=$3 FOR UPDATE',
+            [link['id'], merchantId, digest(token)],
+          )
+        ).rows[0];
+        if (!row) throw new NotFoundException('Checkout not found');
+        if (this.collectionStatus(row) !== 'active')
+          throw new ConflictException('Checkout has been paid, cancelled or expired');
+        const payment = await this.postPayment(
+          client,
+          merchantId,
+          null,
+          Number(row['amount_minor']),
+          String(row['reference']),
+          method,
+          outcome,
+          String(row['id']),
+        );
+        return {
+          id: payment.id,
+          status: payment.status,
+          amountMinor: payment.amountMinor,
+          currency: 'INR',
+          merchantName: link['merchant_name'],
+          reference: row['reference'],
+          mode: 'sandbox-only',
+        };
+      },
+    );
   }
   async cancelLink(ctx: SandboxContext, key: string | undefined, id: string) {
     this.human(ctx);
@@ -504,18 +759,36 @@ export class SandboxService {
   async createKey(ctx: SandboxContext, raw: unknown) {
     this.human(ctx);
     const merchantId = this.owner(ctx),
-      body = objectBody(raw, ['label']),
+      body = objectBody(raw, ['label', 'collectionsEnabled']),
       label = textField(body, 'label', 2, 60);
+    if (body['collectionsEnabled'] !== undefined && typeof body['collectionsEnabled'] !== 'boolean')
+      throw new BadRequestException('Invalid collectionsEnabled');
+    const collectionsEnabled = body['collectionsEnabled'] === true;
     const secret = `sb_test_${newToken()}`,
       id = randomUUID();
     await this.transaction(async (client) => {
       await client.query(
-        'INSERT INTO sb_api_keys (id,merchant_id,created_by,label,key_hash,prefix) VALUES ($1,$2,$3,$4,$5,$6)',
-        [id, merchantId, ctx.userId, label, digest(secret), secret.slice(0, 16)],
+        'INSERT INTO sb_api_keys (id,merchant_id,created_by,label,key_hash,prefix,collections_enabled) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+        [
+          id,
+          merchantId,
+          ctx.userId,
+          label,
+          digest(secret),
+          secret.slice(0, 16),
+          collectionsEnabled,
+        ],
       );
       await this.audit(client, ctx, 'sandbox.key.create', id);
     });
-    return { id, secret, scope: 'sandbox payments read/create; no real funds' };
+    return {
+      id,
+      secret,
+      collectionsEnabled,
+      scope: collectionsEnabled
+        ? 'sandbox payments read/create and orders read/create/checkout; no real funds'
+        : 'sandbox payments read/create; no real funds',
+    };
   }
   async revokeKey(ctx: SandboxContext, id: string) {
     this.human(ctx);

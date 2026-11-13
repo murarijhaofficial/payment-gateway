@@ -6,8 +6,12 @@ implements only `merchant_owner` and `platform_admin`, as described in
 refunds, links, ledger, simulated settlements and keys. Administrators can read
 across test merchants and propose or separately approve commission changes after
 MFA login. Self-registration cannot grant administrator privileges. Test API keys
-permit only their merchant's payment creation and listing; human-only actions
-reject them. Other proposed roles and user administration are not implemented.
+permit their merchant's payment creation and listing. New keys can additionally
+receive explicit collection access for tenant-scoped order creation, lookup and
+checkout publication; existing keys retain their original scope. Human-only
+actions reject API keys. Public checkout tokens authorize only the linked test
+request, never merchant workspace or administration access. Other proposed roles
+and user administration are not implemented. See [collection controls](PAYMENT_COLLECTION.md).
 
 All access
 is denied unless explicitly granted. Authenticated identities and active merchant
