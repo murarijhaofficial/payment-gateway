@@ -15,7 +15,7 @@
     "format:write": "prettier --write .",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test packages/core/src/*.test.ts apps/merchant-web/lib/*.test.ts apps/api/src/*.test.ts apps/api/scripts/*.test.mjs",
+    "test": "node --import tsx --test packages/core/src/*.test.ts apps/merchant-web/lib/*.test.ts apps/api/src/*.test.ts apps/api/scripts/*.test.mjs integrations/node/*.test.mjs",
     "audit": "npm audit --omit=dev"
   },
   "devDependencies": {
