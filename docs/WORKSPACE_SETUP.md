@@ -34,6 +34,22 @@ at login, not the setup key. A used code cannot be reused; wait for the next one
 if necessary. The second administrator exists to test separate-person fee approval.
 These sandbox TOTP controls do not replace production phishing-resistant MFA.
 
+Keep `SANDBOX_ADMIN_TOTP_SECRET` as the permanent setup key in `.env`. Never replace
+it with a six-digit login code. If that local value was accidentally overwritten,
+the following local-only recovery verifies the seeded administrator password and
+restores the existing setup key from its encrypted database record:
+
+```powershell
+$env:APP_ENV = 'development'
+$env:MIGRATION_TARGET = 'neon-sandbox'
+node apps/api/scripts/repair-admin-mfa-env.mjs
+```
+
+It changes only the private local setting, without resetting the database account
+or its MFA enrolment. It does not rotate an exposed key. Add the restored key to
+your authenticator and enter the current six-digit code on the website; the key
+itself and passwords should never be shared in chat or screenshots.
+
 The seed also adds captured/failed payments, a full refund, a simulated settlement,
 a test link and balanced ledger records. Running it again does not duplicate the
 example operations. Conflicting existing credentials cause an error instead of
@@ -66,6 +82,31 @@ Build: `npm ci --include=dev && npm run build --workspace=@platform/api`.
 Start: `node apps/api/dist/main.js`. Health path: `/health`.
 
 ### Login returns 503: workspace is not configured
+
+To prepare the exact existing credentials for import without copying seed passwords
+or MFA keys, run from the repository root:
+
+```powershell
+npm.cmd run build --workspace=@platform/api
+node apps/api/scripts/export-render-env.mjs
+```
+
+The generated `apps/api/.env.render` is private and Git-ignored. In the existing
+Render service, choose **Environment > Add from .env**, import its contents, check
+that the listed variables replace any old values, then **Save and deploy**. Do not
+commit this file. Regenerate it after changing the private database connection string.
+Import the complete file through **Add from .env** so its quoting is parsed; when
+editing one value manually, copy the value without surrounding quotes.
+
+### Startup fails: database URL or encryption key invalid
+
+The server must have both values before it can enable workspace login. The
+encryption key is the existing **64 hexadecimal characters** in
+`SANDBOX_ENCRYPTION_KEY`, not `SANDBOX_ADMIN_TOTP_SECRET` or a six-digit login code.
+Use the private import file above. Do not generate a new encryption key for an
+already seeded database, disable validation, or upload the full development `.env`.
+
+### Workspace still disabled after deployment
 
 This exact error means the running API's `ENABLE_SANDBOX_WORKSPACE` value is
 missing or is not exactly `true`. The database URL and encryption key must also
