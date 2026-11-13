@@ -195,13 +195,18 @@ export function Workspace() {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
     await action(async () => {
+      const otp = String(f.get('otp') ?? '').trim();
+      if (!signup && otp && !/^[0-9]{6}$/.test(otp))
+        throw new Error(
+          'Enter the six-digit code from your authenticator app. The setup key belongs in the authenticator app, not this field.',
+        );
       const session = await request(
         signup ? '/auth/register' : '/auth/login',
         'POST',
         {
           email: f.get('email'),
           password: f.get('password'),
-          ...(signup ? { merchantName: f.get('merchantName') } : { otp: f.get('otp') || '' }),
+          ...(signup ? { merchantName: f.get('merchantName') } : { otp }),
         },
         '',
       );
@@ -359,7 +364,23 @@ export function Workspace() {
             {signup && <Field label="Test merchant name" name="merchantName" />}
             <Field label="Password (12–128 characters)" name="password" type="password" />
             {!signup && (
-              <Field label="Authenticator code (admins only)" name="otp" required={false} />
+              <label className="form-field">
+                <span>Six-digit authenticator code (admins only)</span>
+                <input
+                  name="otp"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  pattern="[0-9]{6}"
+                  placeholder="123456"
+                  title="Enter the current six-digit code shown in your authenticator app."
+                  aria-describedby="authenticator-help"
+                />
+                <small id="authenticator-help" className="muted-text">
+                  Add your setup key to an authenticator app first, then enter its current six-digit
+                  code here. Merchant accounts can leave this blank.
+                </small>
+              </label>
             )}
             <button className="primary-button" disabled={busy || !api}>
               {busy ? 'Connecting…' : signup ? 'Create test account' : 'Sign in'}

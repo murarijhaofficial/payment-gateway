@@ -65,6 +65,26 @@ changing it arbitrarily makes existing administrator MFA secrets unreadable.
 Build: `npm ci --include=dev && npm run build --workspace=@platform/api`.
 Start: `node apps/api/dist/main.js`. Health path: `/health`.
 
+### Login returns 503: workspace is not configured
+
+This exact error means the running API's `ENABLE_SANDBOX_WORKSPACE` value is
+missing or is not exactly `true`. The database URL and encryption key must also
+be configured before enabling it. Editing your local `.env` does not update Render.
+
+Open the existing API service in Render, select **Environment**, and add or update
+the variables above. Copy the encryption key from the private `.env` used when
+seeding; do not generate a different key. Choose **Save and deploy** so the running
+service receives the new settings. **Save only** leaves the current process unchanged.
+See [Render's environment-variable instructions](https://render.com/docs/configure-environment-variables).
+
+An authenticator setup key is different from an encryption key and from a login
+code. Add `SANDBOX_ADMIN_TOTP_SECRET` to an authenticator as a time-based account;
+enter only the app's current six-digit code in the login form. Keep setup keys
+private; a setup key shown in chat or screenshots needs replacement in both the
+encrypted database record and the private configuration, followed by enrolling
+the replacement in the authenticator. Changing `.env` alone will not rotate an
+already-seeded administrator's MFA secret.
+
 ## Vercel environment
 
 ```text
