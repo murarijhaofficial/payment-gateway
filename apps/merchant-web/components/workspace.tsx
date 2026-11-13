@@ -149,6 +149,10 @@ export function Workspace() {
     });
     const payload: unknown = await response.json().catch(() => null);
     if (!response.ok) {
+      if (response.status === 401 && path === '/auth/login')
+        throw new Error(
+          'Check your email and password. Administrators must also enter a fresh six-digit code from their enrolled authenticator app. Fixed, expired or already used codes cannot sign in.',
+        );
       if (response.status === 401 && path !== '/auth/login') {
         setToken('');
         setData(null);
@@ -193,13 +197,16 @@ export function Workspace() {
   }
   async function auth(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    const f = new FormData(e.currentTarget);
+    const form = e.currentTarget;
+    const f = new FormData(form);
     await action(async () => {
       const otp = String(f.get('otp') ?? '').trim();
       if (!signup && otp && !/^[0-9]{6}$/.test(otp))
         throw new Error(
           'Enter the six-digit code from your authenticator app. The setup key belongs in the authenticator app, not this field.',
         );
+      const codeField = form.elements.namedItem('otp');
+      if (codeField instanceof HTMLInputElement) codeField.value = '';
       const session = await request(
         signup ? '/auth/register' : '/auth/login',
         'POST',
@@ -378,9 +385,24 @@ export function Workspace() {
                 />
                 <small id="authenticator-help" className="muted-text">
                   Add your setup key to an authenticator app first, then enter its current six-digit
-                  code here. Merchant accounts can leave this blank.
+                  code here. It changes every 30 seconds. Merchant accounts can leave this blank.
                 </small>
               </label>
+            )}
+            {!signup && (
+              <details className="small-copy">
+                <summary>Need to set up your administrator authenticator?</summary>
+                <ol>
+                  <li>Obtain your private setup QR code from the platform owner.</li>
+                  <li>In your phone's authenticator app, add an account and scan the QR code.</li>
+                  <li>
+                    Enter the app's current code here. Keep your phone's time set automatically.
+                  </li>
+                </ol>
+                <p>
+                  A fixed code copied from a screenshot will expire. Keep your setup key private.
+                </p>
+              </details>
             )}
             <button className="primary-button" disabled={busy || !api}>
               {busy ? 'Connecting…' : signup ? 'Create test account' : 'Sign in'}

@@ -34,6 +34,23 @@ at login, not the setup key. A used code cannot be reused; wait for the next one
 if necessary. The second administrator exists to test separate-person fee approval.
 These sandbox TOTP controls do not replace production phishing-resistant MFA.
 
+For easier enrollment, generate a private offline QR page from the existing
+encrypted administrator record. This verifies the saved password and setup key
+without consuming a login code:
+
+```powershell
+npm.cmd run build --workspace=@platform/api
+$env:APP_ENV = 'development'
+$env:MIGRATION_TARGET = 'neon-sandbox'
+node apps/api/scripts/prepare-admin-authenticator.mjs
+```
+
+Open `apps/api/.env.admin-authenticator.html` locally in a browser, then scan its
+QR code using the authenticator app's Add account option. Use the changing code
+shown in that app at login. The page is Git-ignored, makes no network requests,
+and contains the MFA setup secret but no password. Do not upload or screenshot it;
+delete it after enrollment. This does not rotate any exposed credentials.
+
 Keep `SANDBOX_ADMIN_TOTP_SECRET` as the permanent setup key in `.env`. Never replace
 it with a six-digit login code. If that local value was accidentally overwritten,
 the following local-only recovery verifies the seeded administrator password and
