@@ -1,6 +1,15 @@
 # Draft access policy for review
 
-This policy is a proposal, not an active authorization configuration. All access
+The broader role matrix below is a proposal. The connected sandbox currently
+implements only `merchant_owner` and `platform_admin`, as described in
+[workspace setup](WORKSPACE_SETUP.md). Owners can access their own test payments,
+refunds, links, ledger, simulated settlements and keys. Administrators can read
+across test merchants and propose or separately approve commission changes after
+MFA login. Self-registration cannot grant administrator privileges. Test API keys
+permit only their merchant's payment creation and listing; human-only actions
+reject them. Other proposed roles and user administration are not implemented.
+
+All access
 is denied unless explicitly granted. Authenticated identities and active merchant
 memberships must be loaded from trusted server-side storage; client-supplied roles
 and merchant IDs are not evidence of access. Every merchant resource and query

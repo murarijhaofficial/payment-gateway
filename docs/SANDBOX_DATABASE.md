@@ -1,8 +1,9 @@
 # Sandbox database foundation
 
-The identity schema is a local test foundation, not a login system. Use synthetic
-fixtures only. No API endpoint uses these tables; there are no sessions, password
-hashing, signup, login, MFA or active role permissions. Do not enter real data.
+For working merchant and administrator logins, use [connected workspace setup](WORKSPACE_SETUP.md).
+Migration `002_workspace` adds the `sb_` authentication, transaction and ledger tables.
+The older `001_identity` tables and fixtures described below are retained for
+compatibility; their placeholder passwords cannot sign in. Use synthetic data only.
 
 Create a dedicated local PostgreSQL database and account. The migration creates
 `users`, `merchants`, `merchant_memberships`, and a migration tracking table.

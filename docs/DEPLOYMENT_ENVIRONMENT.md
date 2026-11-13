@@ -1,39 +1,49 @@
 # Sandbox deployment environment
 
-The deployed API has only a read-only health endpoint. It does not connect to
-the database or provide login, transactions, wallets or payments. Do not use real
-user data. Publishing a sandbox does not make it production-ready.
+The API supports database-backed sandbox login, administrator MFA, merchant-scoped
+transactions, simulated wallets and settlements. Use synthetic data only.
+See [workspace setup](WORKSPACE_SETUP.md) to migrate, prepare private credentials,
+seed accounts and verify login before configuring the hosted services.
 
 ## Render API
 
-Set these in the Render service's environment settings:
+| Variable                   | Value                                                                |
+| -------------------------- | -------------------------------------------------------------------- |
+| `APP_ENV`                  | `production`                                                         |
+| `NODE_VERSION`             | `22`                                                                 |
+| `ENABLE_SANDBOX_WORKSPACE` | `true`                                                               |
+| `CORS_ORIGINS`             | `https://merchant-web-chi.vercel.app`                                |
+| `DATABASE_URL`             | Private connection string for the same Neon sandbox used for seeding |
+| `SANDBOX_ENCRYPTION_KEY`   | Exact 64-character hex value from private `apps/api/.env`            |
 
-| Variable       | Value                             | Purpose                                                                                |
-| -------------- | --------------------------------- | -------------------------------------------------------------------------------------- |
-| `APP_ENV`      | `production`                      | Keeps production CORS defaults and public binding. The app still reports sandbox-only. |
-| `CORS_ORIGINS` | `https://your-project.vercel.app` | Exact allowed browser origins, comma-separated; no path or trailing slash.             |
-| `NODE_VERSION` | `22`                              | Selects the Node version used by Render.                                               |
+Render supplies `PORT` and `RENDER`. The encryption key must match the one used
+when seeding administrator MFA. Never upload seed passwords or MFA setup keys.
+`CORS_ORIGINS` accepts comma-separated exact origins without trailing slashes.
+The application remains a sandbox even though `APP_ENV=production` enables the
+hosted-server configuration.
 
-Render provides `PORT` and `RENDER`; do not set them manually. `PORT` selects
-the listening port. The API does not use `DATABASE_URL`; setting it on Render
-does not enable database access or login.
+Build: `npm ci --include=dev && npm run build --workspace=@platform/api`.
+Start: `node apps/api/dist/main.js`. Health check: `/health`.
 
-## Vercel merchant dashboard
+## Vercel dashboard
 
-Set the following for the intended Vercel deployment environment:
+| Variable                      | Value                                       |
+| ----------------------------- | ------------------------------------------- |
+| `NEXT_PUBLIC_SANDBOX_API_URL` | `https://payment-gateway-2fez.onrender.com` |
 
-| Variable                      | Value                               |
-| ----------------------------- | ----------------------------------- |
-| `NEXT_PUBLIC_SANDBOX_API_URL` | `https://your-service.onrender.com` |
+Use root directory `apps/merchant-web`, with access to workspace files outside
+the root. Include development dependencies during installation for TypeScript.
+The API URL is public and embedded at build time: redeploy after changing it.
+Database credentials, passwords and encryption keys must never be public variables.
 
-This is a public API origin, not a secret. Use the API base URL, with no `/health`
-path. Next.js embeds it at build time, so redeploy after changing it. Ensure the
-exact Vercel origin is present in `CORS_ORIGINS` on Render; preview deployments
-may have different origins.
+## Local seed and verification only
 
-## Local sandbox migration tools
+Use `APP_ENV=development`, `MIGRATION_TARGET=neon-sandbox` and the private
+`DATABASE_URL` for the documented scripts. `prepare-workspace.mjs` generates
+`SANDBOX_MERCHANT_PASSWORD`, `SANDBOX_ADMIN_PASSWORD`, `SANDBOX_APPROVER_PASSWORD`,
+`SANDBOX_ADMIN_TOTP_SECRET`, `SANDBOX_APPROVER_TOTP_SECRET` and
+`SANDBOX_ENCRYPTION_KEY` in the ignored `.env`. These are not frontend variables.
 
-`DATABASE_URL`, `APP_ENV=development` and `MIGRATION_TARGET=neon-sandbox` are
-used by the manual migration, verification and seed scripts, not the running
-API. See [sandbox database instructions](SANDBOX_DATABASE.md). Never put a real
-database URL in `.env.example`, client-side variables, Git or chat.
+Rotate the previously exposed Neon password before publicly enabling access.
+Disabling `ENABLE_SANDBOX_WORKSPACE` and redeploying stops workspace access
+without deleting records. No live payment processing or bank payouts are connected.
